@@ -156,4 +156,4 @@ args = parser.parse_args()
 # demo.launch(server_name=args.server_name, server_port=args.server_port, inbrowser=True)
 
 if __name__ == '__main__':
-    demo.launch(share=True,server_port=6006)
+    demo.launch(share=True,server_name="0.0.0.0",server_port=6006)
