@@ -39,3 +39,4 @@ pypinyin
 jieba
 cn2an
 edge_tts
+onnxruntime
