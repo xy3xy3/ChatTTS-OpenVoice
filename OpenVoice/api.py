@@ -2,22 +2,21 @@ import torch
 import numpy as np
 import re
 import soundfile
-from .utils import utils
-from .utils import commons
+from OpenVoice import utils
+from OpenVoice import commons
 import os
 import librosa
-from .text import text_to_sequence
-from .utils.mel_processing import spectrogram_torch
-from .utils.models import SynthesizerTrn
+from OpenVoice.text import text_to_sequence
+from OpenVoice.mel_processing import spectrogram_torch
+from OpenVoice.models import SynthesizerTrn
 
 
 class OpenVoiceBaseClass(object):
-    def __init__(self, 
-                config_path, 
-                #device='cuda:0'):
-                device="cpu"):
-        #if 'cuda' in device:
-        #    assert torch.cuda.is_available()
+    def __init__(self,
+                config_path,
+                device='cuda:0'):
+        if 'cuda' in device:
+            assert torch.cuda.is_available()
 
         hps = utils.get_hparams_from_file(config_path)
 
@@ -34,7 +33,7 @@ class OpenVoiceBaseClass(object):
         self.device = device
 
     def load_ckpt(self, ckpt_path):
-        checkpoint_dict = torch.load(ckpt_path, map_location=torch.device('cpu'))
+        checkpoint_dict = torch.load(ckpt_path, map_location=torch.device(self.device))
         a, b = self.model.load_state_dict(checkpoint_dict['model'], strict=False)
         print("Loaded checkpoint '{}'".format(ckpt_path))
         print('missing/unexpected keys:', a, b)
@@ -108,17 +107,18 @@ class ToneColorConverter(OpenVoiceBaseClass):
             self.watermark_model = wavmark.load_model().to(self.device)
         else:
             self.watermark_model = None
+        self.version = getattr(self.hps, '_version_', "v1")
 
 
 
     def extract_se(self, ref_wav_list, se_save_path=None):
         if isinstance(ref_wav_list, str):
             ref_wav_list = [ref_wav_list]
-        
+
         device = self.device
         hps = self.hps
         gs = []
-        
+
         for fname in ref_wav_list:
             audio_ref, sr = librosa.load(fname, sr=hps.data.sampling_rate)
             y = torch.FloatTensor(audio_ref)
@@ -138,12 +138,12 @@ class ToneColorConverter(OpenVoiceBaseClass):
 
         return gs
 
-    def convert(self, audio_src_path, src_se, tgt_se, output_path=None, tau=0.3, message="@Hilley-MyShell"):
+    def convert(self, audio_src_path, src_se, tgt_se, output_path=None, tau=0.3, message="default"):
         hps = self.hps
         # load audio
         audio, sample_rate = librosa.load(audio_src_path, sr=hps.data.sampling_rate)
         audio = torch.tensor(audio).float()
-        
+
         with torch.no_grad():
             y = torch.FloatTensor(audio).to(self.device)
             y = y.unsqueeze(0)
@@ -158,7 +158,7 @@ class ToneColorConverter(OpenVoiceBaseClass):
                 return audio
             else:
                 soundfile.write(output_path, audio, hps.data.sampling_rate)
-    
+
     def add_watermark(self, audio, message):
         if self.watermark_model is None:
             return audio
@@ -174,7 +174,7 @@ class ToneColorConverter(OpenVoiceBaseClass):
                 print('Audio too short, fail to add watermark')
                 break
             message_npy = bits[n * 32: (n + 1) * 32]
-            
+
             with torch.no_grad():
                 signal = torch.FloatTensor(trunck).to(device)[None]
                 message_tensor = torch.FloatTensor(message_npy).to(device)[None]
@@ -199,4 +199,4 @@ class ToneColorConverter(OpenVoiceBaseClass):
         bits = np.stack(bits).reshape(-1, 8)
         message = utils.bits_to_string(bits)
         return message
-    
+

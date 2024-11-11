@@ -3,7 +3,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from . import commons
+from OpenVoice import commons
 import logging
 
 logger = logging.getLogger(__name__)

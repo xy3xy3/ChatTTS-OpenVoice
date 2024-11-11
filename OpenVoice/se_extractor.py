@@ -1,27 +1,32 @@
 import os
 import glob
 import torch
+import hashlib
+import librosa
+import base64
 from glob import glob
 import numpy as np
 from pydub import AudioSegment
 from faster_whisper import WhisperModel
+import hashlib
+import base64
+import librosa
 from whisper_timestamped.transcribe import get_audio_tensor, get_vad_segments
 
 model_size = "medium"
 # Run on GPU with FP16
 model = None
-def split_audio_whisper(audio_path, target_dir='processed'):
+def split_audio_whisper(audio_path, audio_name, target_dir='processed'):
     global model
     if model is None:
         model = WhisperModel(model_size, device="cuda", compute_type="float16")
     audio = AudioSegment.from_file(audio_path)
     max_len = len(audio)
 
-    audio_name = os.path.basename(audio_path).rsplit('.', 1)[0]
     target_folder = os.path.join(target_dir, audio_name)
-    
+
     segments, info = model.transcribe(audio_path, beam_size=5, word_timestamps=True)
-    segments = list(segments)    
+    segments = list(segments)
 
     # create directory
     os.makedirs(target_folder, exist_ok=True)
@@ -31,7 +36,7 @@ def split_audio_whisper(audio_path, target_dir='processed'):
     # segments
     s_ind = 0
     start_time = None
-    
+
     for k, w in enumerate(segments):
         # process with the time
         if k == 0:
@@ -56,7 +61,7 @@ def split_audio_whisper(audio_path, target_dir='processed'):
         # filter out the segment shorter than 1.5s and longer than 20s
         save = audio_seg.duration_seconds > 1.5 and \
                 audio_seg.duration_seconds < 20. and \
-                len(text) >= 2 and len(text) < 200 
+                len(text) >= 2 and len(text) < 200
 
         if save:
             output_file = os.path.join(wavs_folder, fname)
@@ -69,7 +74,7 @@ def split_audio_whisper(audio_path, target_dir='processed'):
     return wavs_folder
 
 
-def split_audio_vad(audio_path, target_dir, split_seconds=10.0):
+def split_audio_vad(audio_path, audio_name, target_dir, split_seconds=10.0):
     SAMPLE_RATE = 16000
     audio_vad = get_audio_tensor(audio_path)
     segments = get_vad_segments(
@@ -87,10 +92,9 @@ def split_audio_vad(audio_path, target_dir, split_seconds=10.0):
 
     for start_time, end_time in segments:
         audio_active += audio[int( start_time * 1000) : int(end_time * 1000)]
-    
+
     audio_dur = audio_active.duration_seconds
     print(f'after vad: dur = {audio_dur}')
-    audio_name = os.path.basename(audio_path).rsplit('.', 1)[0]
     target_folder = os.path.join(target_dir, audio_name)
     wavs_folder = os.path.join(target_folder, 'wavs')
     os.makedirs(wavs_folder, exist_ok=True)
@@ -111,29 +115,39 @@ def split_audio_vad(audio_path, target_dir, split_seconds=10.0):
         count += 1
     return wavs_folder
 
-
-    
-
+def hash_numpy_array(audio_path):
+    array, _ = librosa.load(audio_path, sr=None, mono=True)
+    # Convert the array to bytes
+    array_bytes = array.tobytes()
+    # Calculate the hash of the array bytes
+    hash_object = hashlib.sha256(array_bytes)
+    hash_value = hash_object.digest()
+    # Convert the hash value to base64
+    base64_value = base64.b64encode(hash_value)
+    return base64_value.decode('utf-8')[:16].replace('/', '_^')
 
 def get_se(audio_path, vc_model, target_dir='processed', vad=True):
     device = vc_model.device
+    version = vc_model.version
+    print("OpenVoice version:", version)
 
-    audio_name = os.path.basename(audio_path).rsplit('.', 1)[0]
+    audio_name = f"{os.path.basename(audio_path).rsplit('.', 1)[0]}_{version}_{hash_numpy_array(audio_path)}"
     se_path = os.path.join(target_dir, audio_name, 'se.pth')
 
-    if os.path.isfile(se_path):
-        se = torch.load(se_path).to(device)
-        return se, audio_name
-    if os.path.isdir(audio_path):
-        wavs_folder = audio_path
-    elif vad:
-        wavs_folder = split_audio_vad(audio_path, target_dir)
+    # if os.path.isfile(se_path):
+    #     se = torch.load(se_path).to(device)
+    #     return se, audio_name
+    # if os.path.isdir(audio_path):
+    #     wavs_folder = audio_path
+
+    if vad:
+        wavs_folder = split_audio_vad(audio_path, target_dir=target_dir, audio_name=audio_name)
     else:
-        wavs_folder = split_audio_whisper(audio_path, target_dir)
-    
+        wavs_folder = split_audio_whisper(audio_path, target_dir=target_dir, audio_name=audio_name)
+
     audio_segs = glob(f'{wavs_folder}/*.wav')
     if len(audio_segs) == 0:
         raise NotImplementedError('No audio segments found!')
-    
+
     return vc_model.extract_se(audio_segs, se_save_path=se_path), audio_name
 

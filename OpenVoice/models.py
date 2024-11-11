@@ -3,14 +3,14 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from . import commons
-from . import modules
-from . import attentions
+from OpenVoice import commons
+from OpenVoice import modules
+from OpenVoice import attentions
 
 from torch.nn import Conv1d, ConvTranspose1d, Conv2d
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
 
-from .utils.commons import init_weights, get_padding
+from OpenVoice.commons import init_weights, get_padding
 
 
 class TextEncoder(nn.Module):
@@ -55,7 +55,7 @@ class TextEncoder(nn.Module):
 
 		m, logs = torch.split(stats, self.out_channels, dim=1)
 		return x, m, logs, x_mask
-     
+
 
 class DurationPredictor(nn.Module):
     def __init__(
@@ -98,7 +98,7 @@ class DurationPredictor(nn.Module):
         x = self.drop(x)
         x = self.proj(x * x_mask)
         return x * x_mask
-               
+
 class StochasticDurationPredictor(nn.Module):
 	def __init__(self, in_channels, filter_channels, kernel_size, p_dropout, n_flows=4, gin_channels=0):
 		super().__init__()
@@ -420,6 +420,7 @@ class SynthesizerTrn(nn.Module):
         upsample_kernel_sizes,
         n_speakers=256,
         gin_channels=256,
+        zero_g=False,
         **kwargs
     ):
         super().__init__()
@@ -461,6 +462,7 @@ class SynthesizerTrn(nn.Module):
             self.sdp = StochasticDurationPredictor(hidden_channels, 192, 3, 0.5, 4, gin_channels=gin_channels)
             self.dp = DurationPredictor(hidden_channels, 256, 3, 0.5, gin_channels=gin_channels)
             self.emb_g = nn.Embedding(n_speakers, gin_channels)
+        self.zero_g = zero_g
 
     def infer(self, x, x_lengths, sid=None, noise_scale=1, length_scale=1, noise_scale_w=1., sdp_ratio=0.2, max_len=None):
         x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths)
@@ -490,8 +492,8 @@ class SynthesizerTrn(nn.Module):
     def voice_conversion(self, y, y_lengths, sid_src, sid_tgt, tau=1.0):
         g_src = sid_src
         g_tgt = sid_tgt
-        z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g_src, tau=tau)
+        z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g_src if not self.zero_g else torch.zeros_like(g_src), tau=tau)
         z_p = self.flow(z, y_mask, g=g_src)
         z_hat = self.flow(z_p, y_mask, g=g_tgt, reverse=True)
-        o_hat = self.dec(z_hat * y_mask, g=g_tgt)
+        o_hat = self.dec(z_hat * y_mask, g=g_tgt if not self.zero_g else torch.zeros_like(g_tgt))
         return o_hat, y_mask, (z, z_p, z_hat)

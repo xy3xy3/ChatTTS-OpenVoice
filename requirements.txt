@@ -28,7 +28,7 @@ librosa
 faster-whisper
 pydub
 wavmark
-numpy
+numpy<2
 eng_to_ipa
 inflect
 unidecode
